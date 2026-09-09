@@ -24,10 +24,13 @@ only builds the substrate it will run on.
    causes congestion; `loadgen/` drives synthetic traffic profiles and
    `chaos/` injects faults (kill/latency/loss), both logged as ground truth
    for later evaluation. See "Phase 2: load & fault model" below.
-3. **Causal discovery engine** — `causal-engine` (Python/FastAPI) consumes
-   the metrics stream and runs PCMCI (Tigramite), causal-learn, and DoWhy to
-   infer a causal graph across node/link metrics and identify likely root
-   causes of a surge or degradation, exposed over an HTTP API.
+3. **Causal discovery engine (this step)** — `causal-engine` (Python/
+   FastAPI) watches how fast the network is changing and picks a fast
+   (Granger) or slow (PCMCI) discovery path accordingly, ranks root causes,
+   proposes a remediation, and validates it counterfactually via DoWhy —
+   all standalone over HTTP, not yet wired into the control plane. See
+   "Phase 3: the causal engine" below and `docs/design.md` for the full
+   algorithm writeup.
 4. **Self-healing control loop** — control-plane consumes causal-engine
    output and issues reroute commands back to agents (adjust simulated
    routing weights/paths), closing the loop from detection to remediation.
@@ -48,8 +51,11 @@ only builds the substrate it will run on.
 - `loadgen/` — Go CLI. Drives a synthetic traffic profile (spike/ramp/
   plateau-only) against one or more nodes.
 - `chaos/` — Go CLI. Injects one fault (kill/latency/loss) at a time.
-- `causal-engine/` — Python + FastAPI. Uses `causal-learn`, `tigramite`
-  (PCMCI), `dowhy`. Empty placeholder until Phase 3.
+- `causal-engine/` — Python 3.11 + FastAPI. Uses `tigramite` (PCMCI),
+  `dowhy`, `statsmodels` (fast-path Granger), `causal-learn` (installed,
+  not yet used — PCMCI/Granger cover discovery so far). Standalone HTTP
+  service, not wired into the control plane yet (Phase 4). See "Phase 3"
+  below and `docs/design.md`.
 - `infra/` — Docker Compose, Prometheus config, Grafana provisioning +
   dashboards, `topology.yaml` (shared network definition read by both Go
   services).
@@ -57,7 +63,13 @@ only builds the substrate it will run on.
   sent) and `ground_truth.jsonl` (every chaos fault ever fired, one JSON
   object per line) — the answer key later evaluation compares detections
   against. Both are generated, not hand-written; don't edit them.
-- `docs/` — write-up material for the final report.
+- `experiments/validate_phase3.py` — calls `/diagnose` on each
+  ground-truth fault's window and checks the reported root cause against
+  it (also accounting for a concurrent load spike, since `make surge`
+  fires one alongside the chaos fault — see Phase 3 section).
+- `docs/` — write-up material for the final report; `docs/design.md` is
+  the actual design doc (velocity-adaptive algorithm, mode selection,
+  root-cause ranking, counterfactual validation).
 
 Messaging (NATS subjects):
 - `veloca.register` — agent liveness heartbeat.
@@ -119,6 +131,56 @@ adding noise to a baseline:
   one-shot containers (`docker compose run --rm loadgen ...` / `... chaos
   ...`, `profiles: ["tools"]` so `docker compose up` skips them).
 
+## Phase 3: the causal engine
+
+`causal-engine/causal_engine/` (Python 3.11, FastAPI, standalone — venv at
+`causal-engine/.venv`, not committed):
+
+- `window.py` — pulls an aligned 1s-resolution DataFrame from Prometheus
+  for a `[end_ts - duration_s, end_ts]` window, one column per
+  `<node>_<metric>` (all 6 nodes × `offered_load_mbps`, `throughput_mbps`,
+  `latency_ms`, `queue_depth`, `packet_loss_pct`). Forward/back-fills gaps
+  up to 5s; raises `WindowError` rather than ever substituting zeros.
+- `velocity.py` — the velocity-adaptive mode selector. See
+  `docs/design.md` for the full algorithm; short version: EMA-smoothed
+  `|d/dt(total offered load / calm-period baseline)|`, hysteresis between
+  `V_LOW=0.15` and `V_HIGH=0.4` picks "fast" or "slow". Pure-function
+  tested in `tests/test_velocity.py` (hysteresis anti-flapping, EMA
+  correctness, a synthetic ramp).
+- `fast_discovery.py` — pairwise Granger causality (`statsmodels`),
+  `tau_max=3`. ~3s over a 60s/30-variable window.
+- `slow_discovery.py` — PCMCI (`tigramite`, ParCorr), `tau_max=10`. ~50s
+  over the same window. Tigramite's `p_matrix[i,j,tau]`/`graph[i,j,tau]`
+  encode a link `i -> j` — verified against a synthetic `x[t-1] -> y[t]`
+  example before relying on it.
+- `rootcause.py` — flags a metric "degraded" if its back half deviates
+  >3σ from its front half (only `latency_ms`/`packet_loss_pct` are
+  checked); ranks graph nodes by how upstream they are of degraded
+  metrics plus earliest-onset, collapsed to one candidate per network
+  node, top-3 returned.
+- `validate.py` — DoWhy counterfactual check on a proposed action (cap a
+  node's `offered_load_mbps` to its topology baseline): rejects outright
+  if there's no causal path treatment→outcome in the graph; otherwise
+  estimates a per-unit effect via `backdoor.linear_regression`, translates
+  it into a predicted p95-latency improvement, and requires both a
+  minimum-gain threshold (`MIN_GAIN=0.10`) and a passing placebo refuter
+  to approve. Granger/PCMCI graphs aren't guaranteed acyclic (mutual A↔B
+  edges are common) but DoWhy needs a DAG — resolved by keeping only the
+  stronger-evidence direction of each mutual pair before any fallback
+  arbitrary-cycle breaking (see `_make_acyclic`; naively breaking whatever
+  cycle `networkx.find_cycle` returns first can discard a strong direct
+  edge in a dense graph instead of a weak indirect one).
+- `main.py` — `POST /diagnose {end_ts, duration_s, mode}` (`mode`:
+  `"auto"` velocity-decided, or force `"fast"`/`"slow"`) runs the full
+  pipeline and returns one verdict. A **fast**-mode diagnosis also
+  schedules a **slow**-path re-run of the same window in the background;
+  if it disagrees on the top root cause, the stored verdict is revised in
+  place (`revised: true`, slow result attached as `revision`) — fetchable
+  via `GET /diagnose/{id}`. Also `GET /status` (recent verdicts) and
+  `GET /graph/latest`.
+
+Not wired into the control plane — that's Phase 4.
+
 ## Conventions
 
 - Keep files small and readable; this is a project meant to be read and
@@ -131,4 +193,6 @@ adding noise to a baseline:
   `loadgen/`, `chaos/`, each with their own `go.mod`), no shared go.work —
   they're built as separate Docker images. Small shared bits (e.g. topology
   parsing, Grafana annotation posting) are intentionally duplicated per
-  module rather than factored into a shared package.
+  module rather than factored into a shared package. `causal-engine/` (Python)
+  follows the same rule — its own small `topology.py` reader, not a shared
+  package with the Go services.

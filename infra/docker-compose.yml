@@ -123,6 +123,7 @@ services:
     image: prom/prometheus:v2.53.0
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
     ports:
       - "9090:9090"
     depends_on:
@@ -132,6 +133,18 @@ services:
       - agent-n4
       - agent-n5
       - agent-n6
+
+  causal-engine:
+    build: ../causal-engine
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      TOPOLOGY_PATH: /app/topology.yaml
+    volumes:
+      - ./topology.yaml:/app/topology.yaml:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - prometheus
 
   grafana:
     image: grafana/grafana:11.1.0
@@ -146,3 +159,6 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+
+volumes:
+  prometheus-data:

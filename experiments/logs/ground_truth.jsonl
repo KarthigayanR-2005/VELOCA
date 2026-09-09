@@ -1,3 +1,5 @@
 {"ts":"2026-09-09T04:48:01Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
 {"ts":"2026-09-09T04:49:29Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
 {"ts":"2026-09-09T13:57:49Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
+{"ts":"2026-09-09T14:16:24Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
+{"ts":"2026-09-09T17:36:15Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
