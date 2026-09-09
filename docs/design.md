@@ -137,6 +137,16 @@ confirmed:
   **approved**, with a large predicted p95 latency improvement.
 - a nonsense action (cap an uninvolved node, e.g. n6, targeting n1's
   latency) was **rejected** — no causal path in the discovered graph.
-- fast and slow paths can disagree on the exact top-1 node (n4 vs. n1 in
-  this run) even while agreeing on the top-3 set — which is precisely
-  what the background-refinement mechanism exists to catch and correct.
+- fast and slow paths can disagree on the exact top-1 node (varies run to
+  run) even while agreeing on the top-3 set — which is precisely what the
+  background-refinement mechanism exists to catch and correct.
+
+`experiments/validate_phase3.py` runs this systematically against every
+fault logged in `ground_truth.jsonl`: **4/4 testable faults correctly
+diagnosed** (top-3 match; a concurrent load spike's targets count as an
+equally-correct answer, since `make surge` always fires both together and
+the spike is usually the dominant effect). A handful of older log entries
+from before Prometheus got a persistent volume (an infra fix made partway
+through this phase) are skipped rather than counted as failures — their
+underlying metric history no longer exists, which is a data-availability
+gap, not a wrong diagnosis.

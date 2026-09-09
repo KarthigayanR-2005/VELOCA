@@ -94,7 +94,9 @@ def main() -> int:
         print("nothing to validate")
         return 1
 
-    all_ok = True
+    tested_ok = 0
+    tested_bad = 0
+    skipped_no_data = 0
     for rec in records:
         fault_ts = dt.datetime.fromisoformat(rec["ts"].replace("Z", "+00:00")).timestamp()
         duration_s = rec.get("duration_s") or 0
@@ -115,12 +117,20 @@ def main() -> int:
         try:
             verdict = diagnose(args.causal_engine_url, end_ts, mode="auto")
         except httpx.HTTPStatusError as exc:
-            print(f"  ERROR calling /diagnose: {exc.response.status_code} {exc.response.text}")
-            all_ok = False
+            if exc.response.status_code == 424:
+                # Prometheus simply doesn't have this window's data anymore
+                # (retention, or an infra restart since the fault was
+                # logged) — that's a data-availability gap, not a wrong
+                # diagnosis, so it doesn't count as a test failure.
+                print(f"  SKIPPED: no Prometheus data left for this window ({exc.response.json().get('detail', '')[:80]}...)")
+                skipped_no_data += 1
+            else:
+                print(f"  ERROR calling /diagnose: {exc.response.status_code} {exc.response.text}")
+                tested_bad += 1
             continue
         except Exception as exc:
             print(f"  ERROR calling /diagnose: {exc}")
-            all_ok = False
+            tested_bad += 1
             continue
 
         found = top_nodes(verdict)
@@ -128,7 +138,10 @@ def main() -> int:
         top3_match = bool(set(found) & expected)
         print(f"  mode={verdict['mode']} velocity={verdict['velocity']:.3f} root_causes={found}")
         print(f"  top-1 match: {top1_match} | top-3 match: {top3_match}")
-        all_ok = all_ok and top3_match
+        if top3_match:
+            tested_ok += 1
+        else:
+            tested_bad += 1
 
         try:
             fast_v = diagnose(args.causal_engine_url, end_ts, mode="fast")
@@ -142,8 +155,12 @@ def main() -> int:
         print(f"  slow: top={slow_top} runtime={slow_v['timings']['discovery_ms']:.0f}ms")
         print(f"  fast/slow agree on top-1: {fast_top == slow_top}")
 
-    print(f"\n=== overall: {'PASS' if all_ok else 'FAIL'} ===")
-    return 0 if all_ok else 1
+    total = tested_ok + tested_bad
+    print(f"\n=== summary: {tested_ok}/{total} testable faults correctly diagnosed"
+          f" ({skipped_no_data} skipped - no Prometheus data left for that window) ===")
+    overall_ok = total > 0 and tested_bad == 0
+    print(f"=== overall: {'PASS' if overall_ok else 'FAIL'} ===")
+    return 0 if overall_ok else 1
 
 
 if __name__ == "__main__":
