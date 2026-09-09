@@ -11,6 +11,7 @@
         "datasource": { "type": "grafana", "uid": "-- Grafana --" },
         "enable": true,
         "iconColor": "red",
+        "type": "tags",
         "tags": ["veloca"]
       }
     ]
@@ -63,5 +64,5 @@
     }
   ],
   "schemaVersion": 39,
-  "version": 2
+  "version": 3
 }

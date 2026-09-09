@@ -19,6 +19,7 @@ import networkx as nx
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
+from causal_engine.annotate import post_annotation
 from causal_engine.fast_discovery import run_fast_discovery
 from causal_engine.rootcause import rank_root_causes
 from causal_engine.slow_discovery import run_slow_discovery
@@ -43,6 +44,13 @@ class DiagnoseRequest(BaseModel):
 
 def _graph_to_edge_list(graph: nx.DiGraph) -> list[dict]:
     return [{"source": u, "target": v, **data} for u, v, data in graph.edges(data=True)]
+
+
+def _annotate_verdict(verdict: dict, prefix: str = "") -> None:
+    top = verdict["root_causes"][0]["node"] if verdict["root_causes"] else "none"
+    verdict_status = "approved" if verdict["approved"] else "not approved"
+    text = f"{prefix}diagnosis ({verdict['mode']}): root cause={top}, action {verdict_status}"
+    post_annotation(text, tags=["veloca", "diagnosis"], time_ms=int(verdict["end_ts"] * 1000))
 
 
 def _propose_action(root_causes: list) -> dict | None:
@@ -110,6 +118,10 @@ def _refine_in_background(verdict_id: str, window) -> None:
         stored["revised"] = True
         stored["revision"] = slow_result
         stored["revision_note"] = f"background slow path disagreed: fast said {old_top!r}, slow says {new_top!r}"
+        post_annotation(
+            f"revised diagnosis (slow): root cause={new_top} (fast path had said {old_top})",
+            tags=["veloca", "diagnosis"], time_ms=int(stored["end_ts"] * 1000),
+        )
 
 
 @app.post("/diagnose")
@@ -145,6 +157,8 @@ def diagnose(req: DiagnoseRequest, background_tasks: BackgroundTasks):
     _verdict_order.append(verdict_id)
     if len(_verdict_order) > _MAX_STORED:
         _verdicts.pop(_verdict_order.pop(0), None)
+
+    _annotate_verdict(verdict)
 
     if use_mode == "fast":
         background_tasks.add_task(_refine_in_background, verdict_id, window)

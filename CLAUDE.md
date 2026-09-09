@@ -178,6 +178,16 @@ adding noise to a baseline:
   place (`revised: true`, slow result attached as `revision`) — fetchable
   via `GET /diagnose/{id}`. Also `GET /status` (recent verdicts) and
   `GET /graph/latest`.
+- `annotate.py` — every diagnosis posts a Grafana annotation ("diagnosis
+  (mode): root cause=X, action approved/not approved"), and a background
+  revision posts its own ("revised diagnosis..."), tagged `["veloca",
+  "diagnosis"]` — same mechanism loadgen/chaos use, so verdicts show up as
+  markers on the same dashboard timeline as the load spikes and faults
+  that caused them. The dashboard's annotation query needs `"type":
+  "tags"` set explicitly (see `infra/grafana/dashboards/veloca-
+  overview.json`) — without it Grafana scopes the query to this
+  dashboard's own annotations by ID instead of searching by tag, and
+  nothing shows up even though the annotations exist.
 
 Not wired into the control plane — that's Phase 4.
 

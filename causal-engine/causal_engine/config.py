@@ -5,6 +5,9 @@ import os
 from causal_engine.topology import node_ids
 
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
+GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://localhost:3000")
+GRAFANA_USER = os.environ.get("GRAFANA_USER", "admin")
+GRAFANA_PASS = os.environ.get("GRAFANA_PASS", "admin")
 
 METRICS = ["throughput_mbps", "latency_ms", "queue_depth", "packet_loss_pct"]
 

@@ -6,3 +6,4 @@
 {"ts":"2026-09-09T18:11:20Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
 {"ts":"2026-09-09T18:12:08Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
 {"ts":"2026-09-09T18:12:57Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
+{"ts":"2026-09-09T18:34:05Z","type":"loss","target":"n2-n3","params":{"loss_pct":15},"duration_s":20}
