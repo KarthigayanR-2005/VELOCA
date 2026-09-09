@@ -1,0 +1,67 @@
+{
+  "title": "VELOCA Overview",
+  "uid": "veloca-overview",
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "name": "VELOCA events",
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "iconColor": "red",
+        "tags": ["veloca"]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 5,
+      "title": "Offered Load (Mbps)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "veloca_offered_load_mbps", "legendFormat": "{{node}}" }
+      ]
+    },
+    {
+      "id": 1,
+      "title": "Throughput (Mbps)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "veloca_throughput_mbps", "legendFormat": "{{node}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "veloca_latency_ms", "legendFormat": "{{node}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Queue Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "veloca_queue_depth", "legendFormat": "{{node}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Packet Loss (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "veloca_packet_loss_pct", "legendFormat": "{{node}}" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 2
+}
