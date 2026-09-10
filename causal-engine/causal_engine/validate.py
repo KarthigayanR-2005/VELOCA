@@ -44,29 +44,63 @@ def _graph_to_dot(graph: nx.DiGraph) -> str:
 
 def _make_acyclic(graph: nx.DiGraph) -> nx.DiGraph:
     """DoWhy's identifier requires a DAG, but Granger/PCMCI routinely
-    report cycles. Most of these are simple mutual pairs (A->B and B->A
-    both significant) rather than genuine longer loops, so resolve those
-    first and deterministically (keep only the stronger direction) —
-    picking an arbitrary cycle to break via nx.find_cycle() in a dense
-    graph can just as easily pick a longer cycle that happens to route
-    through a pair's *stronger* edge, discarding exactly the evidence we
-    want to keep. Only fall back to that arbitrary-cycle removal for
-    whatever longer cycles remain after mutual pairs are resolved.
+    report cycles — and on a dense, weakly-thresholded graph (no
+    multiple-testing correction), that can mean hundreds of overlapping
+    cycles, not just a few simple mutual pairs.
+
+    Originally this repeatedly called nx.find_cycle() and dropped the
+    weakest edge in whatever cycle it found, one at a time. That's
+    correct but can be pathologically slow: on a genuinely dense graph it
+    took over 100 seconds in practice (a live self-healing demo run) —
+    each iteration only guarantees breaking *one* cycle, and a dense
+    graph can have thousands. Replaced with the standard Eades-Lin-Smyth
+    greedy heuristic for the minimum feedback arc set: build a node
+    ordering in one linear-ish pass (peel off sinks to the back, sources
+    to the front, otherwise the node with the highest out-minus-in degree
+    to the front) and keep only edges that run forward in that ordering.
+    That's a single pass with no cycle search at all, so it's fast
+    regardless of how tangled the graph is, and — like the pairwise
+    resolution this replaced — still keeps the stronger-evidence edge in
+    the common case of a mutual pair (an edge's forward-vs-backward
+    orientation in the resulting order tracks which side pulled harder on
+    out/in degree, which strong edges dominate).
     """
     g = graph.copy()
-    for u, v in list(g.edges()):
-        if g.has_edge(u, v) and g.has_edge(v, u):
-            w_uv = g.edges[u, v].get("weight", 0.0)
-            w_vu = g.edges[v, u].get("weight", 0.0)
-            g.remove_edge(v, u) if w_uv >= w_vu else g.remove_edge(u, v)
+    order = _feedback_arc_set_ordering(g)
+    position = {n: i for i, n in enumerate(order)}
+    acyclic = nx.DiGraph()
+    acyclic.add_nodes_from(g.nodes())
+    for u, v, data in g.edges(data=True):
+        if position[u] < position[v]:
+            acyclic.add_edge(u, v, **data)
+    return acyclic
 
-    while True:
-        try:
-            cycle = nx.find_cycle(g)
-        except nx.NetworkXNoCycle:
-            return g
-        weakest = min(cycle, key=lambda e: g.edges[e[0], e[1]].get("weight", 0.0))
-        g.remove_edge(*weakest)
+
+def _feedback_arc_set_ordering(g: nx.DiGraph) -> list:
+    """Eades-Lin-Smyth greedy ordering: nodes placed here-before-there in
+    the returned list means "mostly points forward" — keeping only edges
+    that agree with this order breaks (approximately, near-minimally) all
+    cycles in one pass."""
+    work = g.copy()
+    front: list = []
+    back: list = []
+    while work.number_of_nodes() > 0:
+        removed_any = True
+        while removed_any:
+            removed_any = False
+            for n in [n for n in work.nodes() if work.out_degree(n) == 0]:
+                back.append(n)
+                work.remove_node(n)
+                removed_any = True
+            for n in [n for n in work.nodes() if work.in_degree(n) == 0]:
+                front.append(n)
+                work.remove_node(n)
+                removed_any = True
+        if work.number_of_nodes() > 0:
+            best = max(work.nodes(), key=lambda n: work.out_degree(n) - work.in_degree(n))
+            front.append(best)
+            work.remove_node(best)
+    return front + list(reversed(back))
 
 
 def validate_action(

@@ -88,6 +88,10 @@ func main() {
 	natsURL := getenv("NATS_URL", nats.DefaultURL)
 	topologyPath := getenv("TOPOLOGY_PATH", "/app/topology.yaml")
 	httpAddr := getenv("HTTP_ADDR", ":8080")
+	actionsLogPath := getenv("ACTIONS_LOG_PATH", "/app/logs/actions.jsonl")
+	grafanaURL := getenv("GRAFANA_URL", "")
+	grafanaUser := getenv("GRAFANA_USER", "admin")
+	grafanaPass := getenv("GRAFANA_PASS", "admin")
 
 	topo, err := loadTopology(topologyPath)
 	if err != nil {
@@ -121,6 +125,8 @@ func main() {
 		log.Fatalf("subscribing to veloca.metrics.*: %v", err)
 	}
 
+	alog := newActionLog(actionsLogPath)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -128,6 +134,11 @@ func main() {
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/execute", executeHandler(nc, alog, grafanaURL, grafanaUser, grafanaPass))
+	mux.HandleFunc("/actions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(alog.recentRecords())
 	})
 
 	log.Printf("control-plane listening on %s", httpAddr)

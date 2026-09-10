@@ -49,6 +49,7 @@ func main() {
 	load := &externalLoad{}
 	inbound := newInboundFlows()
 	chaos := newChaosState()
+	action := &actionCap{}
 
 	if _, err := nc.Subscribe("veloca.load."+nodeID, func(msg *nats.Msg) {
 		var m loadMsg
@@ -78,9 +79,8 @@ func main() {
 		log.Fatalf("subscribing to veloca.chaos.%s: %v", nodeID, err)
 	}
 
-	// Phase 4 will act on these; for now just observe them.
 	if _, err := nc.Subscribe("veloca.action."+nodeID, func(msg *nats.Msg) {
-		log.Printf("action received (not yet acted on): %s", string(msg.Data))
+		handleAction(msg.Data, nodeID, action, load, baseline)
 	}); err != nil {
 		log.Fatalf("subscribing to veloca.action.%s: %v", nodeID, err)
 	}
@@ -94,7 +94,8 @@ func main() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		offeredTotal := load.get(baseline.ThroughputMbps) + inbound.sum()
+		cappedExternal := action.apply(load.get(baseline.ThroughputMbps))
+		offeredTotal := cappedExternal + inbound.sum()
 
 		m := sim.tick(nodeID, offeredTotal, chaos)
 		gauges.set(m)

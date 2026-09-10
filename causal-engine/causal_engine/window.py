@@ -32,6 +32,12 @@ def get_window(end_ts: float, duration_s: float = 60, metrics: list[str] | None 
     after filling, raises WindowError rather than returning zeros.
     """
     metrics = metrics or ALL_METRICS
+    # Prometheus returns whole-second-aligned samples regardless of the
+    # exact query timestamps given; a fractional end_ts (e.g. straight
+    # from time.time(), as watch.py uses) would build a reindex grid that
+    # never exactly matches those samples, silently turning every column
+    # to NaN. Rounding first keeps the query and the reindex grid aligned.
+    end_ts = round(end_ts)
     start_ts = end_ts - duration_s
     start = dt.datetime.fromtimestamp(start_ts, tz=dt.timezone.utc)
     end = dt.datetime.fromtimestamp(end_ts, tz=dt.timezone.utc)
@@ -44,7 +50,12 @@ def get_window(end_ts: float, duration_s: float = 60, metrics: list[str] | None 
     for node in config.NODES():
         for metric in metrics:
             col = f"{node}_{metric}"
-            query = f'veloca_{metric}{{node="{node}"}}'
+            # match on both node and instance: a stale/mislabeled series
+            # from container churn (a scrape that briefly returned the
+            # wrong node's data during a container recreation) can leave a
+            # frozen sample behind that would otherwise still match on
+            # node= alone — instance= pins it to the right container too.
+            query = f'veloca_{metric}{{node="{node}", instance="agent-{node}:9100"}}'
             try:
                 result = client.custom_query_range(query=query, start_time=start, end_time=end, step="1s")
             except Exception as exc:  # Prometheus unreachable, bad query, etc.
@@ -53,6 +64,8 @@ def get_window(end_ts: float, duration_s: float = 60, metrics: list[str] | None 
             if not result:
                 missing.append(col)
                 continue
+            if len(result) > 1:
+                raise WindowError(f"expected exactly one series for {col}, Prometheus returned {len(result)}: {[r['metric'] for r in result]}")
 
             values = result[0]["values"]
             ts = pd.to_datetime([float(v[0]) for v in values], unit="s", utc=True)

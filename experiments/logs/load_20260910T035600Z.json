@@ -1,0 +1,286 @@
+{
+  "profile": "spike",
+  "targets": [
+    "n1",
+    "n4"
+  ],
+  "amplitude": 3.5,
+  "rise_s": 3,
+  "plateau_s": 20,
+  "fall_s": 3,
+  "seed": 42,
+  "started_at": "2026-09-10T09:26:00.1877534+05:30",
+  "ended_at": "2026-09-10T09:26:26.2574936+05:30",
+  "points": [
+    {
+      "t_offset_s": 0,
+      "node": "n1",
+      "offered_load_mbps": 120
+    },
+    {
+      "t_offset_s": 0,
+      "node": "n4",
+      "offered_load_mbps": 110
+    },
+    {
+      "t_offset_s": 1,
+      "node": "n1",
+      "offered_load_mbps": 220
+    },
+    {
+      "t_offset_s": 1,
+      "node": "n4",
+      "offered_load_mbps": 201.66666666666666
+    },
+    {
+      "t_offset_s": 2,
+      "node": "n1",
+      "offered_load_mbps": 320
+    },
+    {
+      "t_offset_s": 2,
+      "node": "n4",
+      "offered_load_mbps": 293.3333333333333
+    },
+    {
+      "t_offset_s": 3,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 3,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 4,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 4,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 5,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 5,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 6,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 6,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 7,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 7,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 8,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 8,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 9,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 9,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 10,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 10,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 11,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 11,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 12,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 12,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 13,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 13,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 14,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 14,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 15,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 15,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 16,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 16,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 17,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 17,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 18,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 18,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 19,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 19,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 20,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 20,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 21,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 21,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 22,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 22,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 23,
+      "node": "n1",
+      "offered_load_mbps": 420
+    },
+    {
+      "t_offset_s": 23,
+      "node": "n4",
+      "offered_load_mbps": 385
+    },
+    {
+      "t_offset_s": 24,
+      "node": "n1",
+      "offered_load_mbps": 320.00000000000006
+    },
+    {
+      "t_offset_s": 24,
+      "node": "n4",
+      "offered_load_mbps": 293.33333333333337
+    },
+    {
+      "t_offset_s": 25,
+      "node": "n1",
+      "offered_load_mbps": 220.00000000000003
+    },
+    {
+      "t_offset_s": 25,
+      "node": "n4",
+      "offered_load_mbps": 201.66666666666669
+    },
+    {
+      "t_offset_s": 26,
+      "node": "n1",
+      "offered_load_mbps": 120
+    },
+    {
+      "t_offset_s": 26,
+      "node": "n4",
+      "offered_load_mbps": 110
+    }
+  ]
+}

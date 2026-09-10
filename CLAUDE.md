@@ -31,9 +31,11 @@ only builds the substrate it will run on.
    all standalone over HTTP, not yet wired into the control plane. See
    "Phase 3: the causal engine" below and `docs/design.md` for the full
    algorithm writeup.
-4. **Self-healing control loop** — control-plane consumes causal-engine
-   output and issues reroute commands back to agents (adjust simulated
-   routing weights/paths), closing the loop from detection to remediation.
+4. **Self-healing control loop (this step)** — agents obey a `cap_offered_
+   load` action; control-plane executes approved verdicts against them and
+   logs every action; `watch.py` polls for degradation and drives the full
+   detect→diagnose→validate→execute→verify loop with no manual step,
+   off by default. See "Phase 4: closing the loop" below.
 5. **Velocity-adaptive tuning + evaluation** — adapt the causal discovery
    window/cadence to observed traffic velocity; run experiments comparing
    self-healing vs. a non-causal reactive baseline; write up results in
@@ -78,8 +80,9 @@ Messaging (NATS subjects):
 - `veloca.flow.<node_id>` — one neighbor telling this node how much traffic
   it just forwarded to it (cross-traffic propagation, see below).
 - `veloca.chaos.<node_id>` — chaos fires a kill/latency/loss fault.
-- `veloca.action.<node_id>` — reserved for Phase 4 reroute commands; agents
-  currently only log what arrives here.
+- `veloca.action.<node_id>` — control-plane publishes an executed action
+  here (currently only `cap_offered_load`); the agent obeys it and logs
+  before/after offered load (see Phase 4 section).
 
 Metrics: Prometheus + Grafana. Everything runs via a single
 `docker compose up` from `infra/`.
@@ -189,7 +192,121 @@ adding noise to a baseline:
   dashboard's own annotations by ID instead of searching by tag, and
   nothing shows up even though the annotations exist.
 
-Not wired into the control plane — that's Phase 4.
+## Phase 4: closing the loop
+
+`agent/action.go` — agents obey `veloca.action.<node_id>`: `cap_offered_
+load` clamps external offered load to `cap_mbps` for `duration_s`, then
+releases back to whatever the load generator/baseline says (no lingering
+effect once it expires). Logs before/after offered load and the action_id
+on `docker compose logs agent-<node>`.
+
+`control-plane/execute.go` — `POST /execute` takes a causal-engine verdict
+JSON. Rejects (publishes nothing, logs why) unless `approved: true` *and*
+`proposed_action` is present — enforced here too, not just trusted from
+the caller. On success: publishes the action to the target node, appends
+an `{"event":"executed",...}` record to `experiments/logs/actions.jsonl`,
+posts a Grafana annotation, returns `{executed, action_id, reason}` (always
+HTTP 200 for a well-formed request — callers check `executed`, not the
+status code, for the business-logic outcome). `GET /actions` returns
+recent records from memory.
+
+`causal-engine/causal_engine/main.py` — `POST /diagnose` gained
+`auto_execute: bool | None` (`None` → `config.AUTO_EXECUTE_DEFAULT`, off).
+When true and the verdict is approved, it calls control-plane's
+`/execute` itself and attaches the result as `verdict["execution"]`
+(always populated with a reason, even when nothing executed — "auto_execute
+is off" vs. "verdict not approved" are distinct, not both collapsed into
+a bare `null`). Only the *initial* verdict can trigger execution — a
+background slow-path revision never does (by the time it lands ~50s
+later, the original action may already be settling/verified, and
+re-triggering off a late correction would just confuse the timeline).
+`POST /verify/{action_id}` (only for actions this instance itself
+executed, tracked in memory) waits `settle_s` (default 15s), pulls a
+fresh window, and checks whether the target metric recovered — see
+`verify.py` below.
+
+`causal-engine/causal_engine/verify.py` — `recovery_fraction = 1 -
+(recent_mean - baseline_mean) / (peak - baseline_mean)`: 1.0 = fully back
+at the pre-incident baseline, 0.0 = still at the incident's peak.
+`>= RECOVERED_FRACTION` (0.8) → `"recovered"`, `>= PARTIAL_FRACTION` (0.3)
+→ `"partial"`, else `"not_recovered"` — the last one appends an
+`"escalation"` event to `actions.jsonl` rather than silently declaring
+success or attempting a second automatic action (out of scope on purpose).
+
+`causal-engine/watch.py` — standalone script, **off unless explicitly
+run** (changes live traffic on purpose is never the default). Polls
+Prometheus every `--interval`, checks for degradation via the same
+`find_degraded` z-score check as `rootcause.py`; if found, waits
+`--settle-before-diagnose` (see below), then runs
+detect→diagnose(`auto_execute=true`)→execute→verify with no manual step.
+Forces `mode="fast"` regardless of velocity — watch mode's whole point is
+reacting quickly, and a diagnosis fired the instant degradation crosses
+the threshold has very little incident data to work with; both the slow
+path and the velocity estimator itself need more samples than a fresh
+trigger has, and a short surge can be over before a 15-50s slow-path
+diagnosis even finishes.
+
+**Bugs found and fixed via live runs, not synthetic tests** (each one
+only surfaced by actually running the loop against the real network):
+- `window.py` reindexed against a fractional-second grid when given
+  `time.time()` directly (as `watch.py` does) — Prometheus's returned
+  samples are whole-second-aligned, so every column silently came back
+  all-NaN. Fixed by rounding `end_ts` before building the query and the
+  reindex grid.
+- A stale, no-longer-updating time series (`instance="agent-n1:9100"`
+  mislabeled `node="n4"`) lingered in Prometheus after container churn
+  during the Phase 3 disk-space incident, and could get silently picked
+  as `result[0]` for a query matching on `node=` alone. Fixed by also
+  matching on `instance=` and raising `WindowError` if more than one
+  series comes back, instead of silently taking the first.
+- `rank_root_causes` never weighed a candidate's own degradation severity
+  — only graph topology (in/out-degree to other degraded variables).
+  Observed live: a node with a barely-crossed z≈5 spillover blip
+  outranked a node at z≈180 because it happened to pick up a couple more
+  spurious edges on a dense, uncorrected-for-multiple-testing graph.
+  Fixed by adding a `log10(z_score+1)` severity term per node.
+- `_make_acyclic` (breaking cycles before handing the graph to DoWhy)
+  repeatedly called `nx.find_cycle` + removed one edge at a time — correct
+  but only guaranteed breaking *one* cycle per iteration, and a dense
+  graph can have hundreds. Took **over 100 seconds** in a live run.
+  Replaced with the standard Eades-Lin-Smyth greedy feedback-arc-set
+  heuristic (one linear-ish pass, no cycle search at all): ~6ms on the
+  same class of graph in testing.
+- Root-cause ranking only ever tried the top candidate's proposed action;
+  a tie (or a candidate degraded by something other than its own offered
+  load, e.g. a link-loss victim) could rank highest while having no
+  causally-supported action, silently giving up rather than trying the
+  next-ranked candidate. Fixed: try each top-3 candidate in order, take
+  the first one DoWhy actually approves.
+- `packet_loss_pct`'s baseline sits so close to zero (~0.05%) that a bare
+  5%-of-mean noise floor was a fraction of a percentage point — small
+  enough that ordinary jitter alone crossed z=3 and false-triggered watch
+  mode on a perfectly calm network. Fixed with a metric-specific absolute
+  noise floor (`_ABSOLUTE_NOISE_FLOOR` in `rootcause.py`).
+
+**Verified end-to-end** (real timestamps, real Prometheus data, no
+manual step): `watch.py` running, then a 66s n1/n4 spike (`loadgen
+--plateau 60s`, no concurrent chaos fault — isolates the loop's response
+to the actual overload from an unrelated fault) fired at t=0. Detected at
+t+7s, diagnosed+executed (cap n4 to baseline) at t+20s (5.1s fast-path
+discovery), verified `recovered` (96%) at t+36s. Cross-checked against
+raw Prometheus data: n4's latency (peaked at 719ms) dropped to
+near-baseline within 2s of the cap taking effect and stayed there for the
+full 30s the action was active — genuine causal effect, not coincidental
+timing with the surge's own profile, which was still 30+ seconds from
+ending. A control run (identical `loadgen` command, no watch mode)
+confirmed n4's latency stayed elevated (600-750ms) continuously for the
+entire ~66s plateau, only recovering ~t+69s once the profile ended
+naturally. The action's relief was temporary (the 30s cap expired mid-
+plateau and the problem resurged, which subsequent watch cycles in this
+run didn't happen to catch — a real, honestly-observed limitation of a
+single one-shot action against a persistently-renewing load, not glossed
+over) — but the *first response* was ~46s faster than doing nothing.
+
+Safety verified: a calm-baseline window with `auto_execute=true` produces
+no root-cause candidate → `approved=False` → nothing executed (observed
+live, repeatedly); `POST /execute` with `approved: false` sent directly
+is refused with no NATS publish and no `actions.jsonl` entry.
 
 ## Conventions
 

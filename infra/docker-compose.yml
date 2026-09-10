@@ -10,8 +10,11 @@ services:
       NATS_URL: nats://nats:4222
       TOPOLOGY_PATH: /app/topology.yaml
       HTTP_ADDR: :8080
+      ACTIONS_LOG_PATH: /app/logs/actions.jsonl
+      GRAFANA_URL: http://grafana:3000
     volumes:
       - ./topology.yaml:/app/topology.yaml:ro
+      - ../experiments/logs:/app/logs
     ports:
       - "8080:8080"
     depends_on:
@@ -140,12 +143,16 @@ services:
       PROMETHEUS_URL: http://prometheus:9090
       TOPOLOGY_PATH: /app/topology.yaml
       GRAFANA_URL: http://grafana:3000
+      CONTROL_PLANE_URL: http://control-plane:8080
+      ACTIONS_LOG_PATH: /app/logs/actions.jsonl
     volumes:
       - ./topology.yaml:/app/topology.yaml:ro
+      - ../experiments/logs:/app/logs
     ports:
       - "8000:8000"
     depends_on:
       - prometheus
+      - control-plane
 
   grafana:
     image: grafana/grafana:11.1.0

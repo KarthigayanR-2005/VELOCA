@@ -3,6 +3,7 @@ the causal graph's structure (who's upstream vs downstream of the trouble)
 plus which degraded variable's anomaly started earliest."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import networkx as nx
@@ -17,6 +18,9 @@ class DegradedVar:
     column: str
     z_score: float
     onset: pd.Timestamp | None
+    baseline_mean: float
+    baseline_std: float
+    peak: float
 
 
 @dataclass
@@ -47,14 +51,45 @@ def find_degraded(
         if not any(col.endswith("_" + m) for m in config.DEGRADED_METRICS):
             continue
         b_mean, b_std = baseline[col].mean(), baseline[col].std()
-        if not np.isfinite(b_std) or b_std == 0:
-            b_std = max(abs(b_mean) * 0.05, 1e-6)  # near-constant baseline: assume a 5% noise floor
+        b_std = _noise_floor(col, b_mean, b_std)
         z = (recent[col] - b_mean) / b_std
         max_z = z.max()
         if max_z > z_threshold:
             onset = z[z > z_threshold].index.min()
-            degraded.append(DegradedVar(column=col, z_score=float(max_z), onset=onset))
+            degraded.append(DegradedVar(
+                column=col, z_score=float(max_z), onset=onset,
+                baseline_mean=float(b_mean), baseline_std=float(b_std),
+                peak=float(recent[col].max()),
+            ))
     return degraded
+
+
+def column_baseline(window: pd.DataFrame, column: str, baseline_fraction: float = config.BASELINE_FRACTION) -> tuple[float, float]:
+    """Front-half mean/std for one column, regardless of whether it was
+    flagged degraded — used as a verification fallback when the exact
+    column checked by validate.py wasn't itself over the z-score bar."""
+    n = len(window)
+    split = max(1, int(n * baseline_fraction))
+    baseline = window[column].iloc[:split]
+    mean, std = float(baseline.mean()), float(baseline.std())
+    return mean, _noise_floor(column, mean, std)
+
+
+# packet_loss_pct sits so close to zero at rest (~0.05%) that a bare 5%-of-
+# mean floor is a fraction of a percentage point — small enough that
+# ordinary jitter alone crosses a z=3 threshold and false-triggers watch
+# mode on a perfectly calm network. An absolute floor per metric fixes
+# this without needing a metric-specific z-threshold; latency_ms's own
+# baseline (tens of ms) is large enough that a floor barely matters there.
+_ABSOLUTE_NOISE_FLOOR = {"packet_loss_pct": 0.05, "latency_ms": 2.0}
+
+
+def _noise_floor(column: str, mean: float, std: float) -> float:
+    if not np.isfinite(std) or std == 0:
+        std = abs(mean) * 0.05
+    metric = column.split("_", 1)[1] if "_" in column else column
+    floor = _ABSOLUTE_NOISE_FLOOR.get(metric, 1e-6)
+    return max(std, floor)
 
 
 def _node_of(column: str) -> str:
@@ -73,6 +108,17 @@ def rank_root_causes(graph: nx.DiGraph, window: pd.DataFrame, top_n: int = 3) ->
     onset_order = sorted(degraded, key=onset_key)
     onset_rank = {d.column: i for i, d in enumerate(onset_order)}
 
+    # How badly is each *node* actually degraded (its worst column's
+    # z-score)? Graph topology alone (out/in-degree to other degraded
+    # vars) is easy noise to game on a dense, weakly-thresholded graph —
+    # observed live: a node with a barely-crossed z~5 spillover blip
+    # outranking a node at z~180 because it happened to pick up a couple
+    # more spurious edges. Severity has to actually count.
+    z_by_node: dict[str, float] = {}
+    for d in degraded:
+        node = _node_of(d.column)
+        z_by_node[node] = max(z_by_node.get(node, 0.0), d.z_score)
+
     per_column: list[RootCauseCandidate] = []
     for col in graph.nodes:
         succs = set(graph.successors(col)) if col in graph else set()
@@ -85,8 +131,12 @@ def rank_root_causes(graph: nx.DiGraph, window: pd.DataFrame, top_n: int = 3) ->
 
         # upstream (points at the trouble, isn't pointed at by it) scores
         # highest; being the earliest-onset degraded variable adds a bonus
-        # since that's evidence of being the original trigger.
+        # since that's evidence of being the original trigger; how badly
+        # degraded this node actually is (log-scaled, so a 180 vs 5
+        # z-score gap dominates ties without letting one outlier sample
+        # swamp everything) breaks topology-only ties correctly.
         score = out_to_degraded - in_from_degraded
+        score += math.log10(z_by_node.get(_node_of(col), 0.0) + 1) * 5.0
         rank = onset_rank.get(col)
         if rank is not None:
             score += (len(onset_order) - rank) * 0.5

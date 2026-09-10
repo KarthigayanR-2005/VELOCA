@@ -150,3 +150,105 @@ from before Prometheus got a persistent volume (an infra fix made partway
 through this phase) are skipped rather than counted as failures — their
 underlying metric history no longer exists, which is a data-availability
 gap, not a wrong diagnosis.
+
+## Phase 4: closing the loop
+
+No "Chapter 5" or loop diagram existed before this phase either (Phase 3's
+brief made the same assumption about this file that Phase 4's did — see
+the note at the top of this document). Here's the actual loop, as built:
+
+```
+   Prometheus  <---- metrics ---- agents (n1..n6)
+       |
+       | polled every --interval (watch.py, off by default)
+       v
+  [detect]  find_degraded() — same z-score check as rootcause.py
+       |  (only if something crosses the threshold)
+       v
+  [settle]  wait --settle-before-diagnose — a fresh trigger has almost no
+       |    incident data yet; even the fast path needs a few overload
+       |    samples to find a lagged relationship reliably
+       v
+  [diagnose]  POST /diagnose (mode=fast, auto_execute=true)
+       |      velocity -> discovery -> rank root causes (severity-
+       |      weighted) -> try top-3 in order -> DoWhy validates each ->
+       |      first approved one wins
+       v
+  [execute]  causal-engine calls control-plane's POST /execute
+       |     control-plane re-checks approved==true itself (defense in
+       |     depth), publishes veloca.action.<node>, logs actions.jsonl
+       v
+  [obey]  agent clamps its own offered load to cap_mbps for duration_s,
+       |  then releases back to the load generator/baseline
+       v
+  [verify]  after settle_s, POST /verify/{action_id} — pull a fresh
+             window, compare the target metric against its pre-incident
+             baseline, classify recovered / partial / not_recovered.
+             not_recovered -> escalation event, not a silent retry.
+```
+
+A **fast**-mode diagnosis (which is what watch.py always requests) also
+still schedules the existing Phase 3 background slow-path re-run of the
+same window — that mechanism didn't change, it just now sits underneath
+an auto-executing verdict instead of a purely advisory one.
+
+### Why the action is temporary, and what that revealed
+
+`cap_offered_load` clamps a node's external load for `duration_s` (30s
+default) and then releases it — it does not touch the load generator or
+chaos fault that's still trying to push the original values. This is
+deliberate: the action addresses the *node's* behavior, not the demand
+being placed on it. Against `make surge`'s original 26s profile this
+rarely mattered (the cap outlasted the surge). Against a longer, more
+realistic surge it does: the first live run against a 66s spike showed
+the capped node's latency snap back to baseline within 2 seconds of the
+cap taking effect, hold there for the full 30s window, then resurge the
+moment the cap expired — because the load generator was still trying to
+push 3.5x baseline for another 30+ seconds. Watch mode's own poll cadence
+(bounded below by settle + diagnosis + verify time, each several to tens
+of seconds) didn't happen to land another detection cycle during that
+resurgence in this run, so it went unaddressed until the surge's own
+profile ended naturally.
+
+This is reported as a real, observed limitation, not smoothed over: a
+single one-shot action provides genuine, measurable relief while it's
+active, but isn't a durable fix against a *persistently renewing* load on
+its own — durable suppression would need either a longer `duration_s`
+tied to how long the underlying anomaly is expected to last, or a watch
+loop fast enough to reliably re-trigger before an expired cap's problem
+resurges. Neither is implemented; both are natural Phase 5 material.
+
+### The recovery-time comparison
+
+Two identical scenarios — `loadgen --profile spike --target n1,n4
+--amplitude 3.5 --rise 3s --plateau 60s --fall 3s --seed 42`, no
+concurrent chaos fault (isolates the loop's response to the actual
+overload from an unrelated fault competing for root-cause ranking) — one
+with `watch.py` running, one without:
+
+| | With the loop | Without (control) |
+|---|---|---|
+| n4 latency leaves baseline | t+3s (ramp begins) | t+3s (ramp begins) |
+| n4 latency peaks | ~719ms (t+13-21s) | ~746ms (t+59-65s) |
+| **n4 latency back near baseline** | **t+23s** (cap takes effect) | **t+69s** (surge's own profile ends) |
+| Mechanism | automatic detect->diagnose->execute, ~46s faster | none — waits out the full 60s plateau |
+
+Both trajectories pulled directly from Prometheus range queries over the
+live run (not the `/verify` endpoint's single post-hoc check) — the
+control run's n4 latency sits continuously in the 600-750ms band for the
+entire plateau with zero relief, confirming the with-loop drop at t+23s
+is attributable to the executed action and not coincidental timing.
+
+### Safety
+
+- A calm-baseline window with `auto_execute=true`: no degraded metric
+  found -> `approved=False` -> `execution: {"executed": false, "reason":
+  "verdict not approved, execution skipped"}` -> nothing published to any
+  agent. Observed live and repeatedly (watch mode's own false-trigger
+  cycles during this phase's debugging all correctly executed nothing).
+- `POST /execute` independently refuses a hand-crafted `{"approved":
+  false, ...}` verdict sent directly — control-plane doesn't just trust
+  causal-engine's judgment, it re-checks.
+- The Phase 3 nonsense-action test (cap an uninvolved node) still holds:
+  `validate_action` rejects for lack of a causal path regardless of who's
+  calling it.
